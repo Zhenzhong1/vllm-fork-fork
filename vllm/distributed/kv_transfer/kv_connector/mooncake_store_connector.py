@@ -327,11 +327,11 @@ class MooncakeStoreConnector(KVConnectorBase):
         torch.hpu.synchronize()
 
         seq_lens = model_input.attn_metadata.seq_lens_tensor.tolist()
-        slot_mapping = attn_metadata.slot_mapping.flatten()
+        slot_mapping = attn_metadata.slot_mapping
 # [RECV] recv_kv_caches_and_hidden_states_hpu..., kv_caches[0][0].shape: torch.Size([107392, 8, 128]), seq_lens: [10], slot_mapping: tensor([32, 33, 34, 35, 36, 37, 38, 39, 40, 41,  0,  0,  0,  0,  0,  0,  0,  0,
 #      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0], device='hpu:0')
 
-        logger.info(f"[RECV] recv_kv_caches_and_hidden_states_hpu..., kv_caches[0][0].shape: {kv_caches[0][0].shape}, seq_lens: {seq_lens}, slot_mapping: {slot_mapping}")
+        logger.info(f"[RECV] recv_kv_caches_and_hidden_states_hpu..., kv_caches[0][0].shape: {kv_caches[0][0].shape}, seq_lens: {seq_lens}, slot_mapping.shape: {slot_mapping.shape}")
 
         
         hidden_or_intermediate_states_for_one_req: list[torch.Tensor] = []
@@ -340,6 +340,9 @@ class MooncakeStoreConnector(KVConnectorBase):
 
         for idx, slen in enumerate(seq_lens):
             current_tokens = input_tokens_tensor_cpu[idx][:slen]
+            padded_total_size = (slen + self.block_size -
+                                 1) // self.block_size * self.block_size
+            current_slot_mapping = slot_mapping[idx][:padded_total_size]
             num_blocks = (slen + 127) // 128
             end_block_idx = start_block_idx + num_blocks
 
@@ -356,7 +359,7 @@ class MooncakeStoreConnector(KVConnectorBase):
                             (self.block_size, head_size),
                             dtype=self.dtype,
                             device="hpu")
-                        self.cache_k(padding_k_tensor, key_cache, slot_mapping)
+                        self.cache_k(padding_k_tensor, key_cache, current_slot_mapping)
                     else:
                         padding_k_tensor = torch.zeros(
                             (self.block_size, num_heads, head_size),
@@ -366,9 +369,9 @@ class MooncakeStoreConnector(KVConnectorBase):
                             (self.block_size, num_heads, head_size),
                             dtype=self.dtype,
                             device="hpu")
-                        self.cache_k(padding_k_tensor, key_cache, slot_mapping)
+                        self.cache_k(padding_k_tensor, key_cache, current_slot_mapping)
                         self.cache_v(padding_v_tensor, value_cache,
-                                     slot_mapping)
+                                     current_slot_mapping)
                 # the first one should never be padding,
                 # so we can append the first one.
                 hidden_or_intermediate_states_for_one_req.append(
@@ -400,7 +403,7 @@ class MooncakeStoreConnector(KVConnectorBase):
                 print(f"错误: 文件 fixed_hidden_key.pt 未找到。")
                 return None
 
-            logger.info(f"[RECV]: remote_kv.shape : {remote_kv.shape}, hidden.shape: {hidden.shape}")
+            logger.info(f"[RECV]: hidden.shape: {hidden.shape}, load_kvcache_key: {load_kvcache_key}")
 
             if remote_kv is None or hidden is None:
                 logger.info("Didn't find any match, load_key_prefix: %s",
@@ -417,8 +420,7 @@ class MooncakeStoreConnector(KVConnectorBase):
 
             htorch.core.mark_step()
             torch.hpu.synchronize()
-            
-            
+                        
             remote_kv = remote_kv.to("hpu")
 
             # put received KV caches into paged memory layer by layer
@@ -429,16 +431,16 @@ class MooncakeStoreConnector(KVConnectorBase):
                 key_cache, value_cache = kv_cache[0], kv_cache[1]
                 if self.kv_helper.use_mla():
                     remote_k = remote_kv[cur_layer_idx]
-                    self.cache_k(remote_k, key_cache, slot_mapping)
+                    self.cache_k(remote_k, key_cache, current_slot_mapping)
                 else:
                     remote_k, remote_v = remote_kv[0][i], remote_kv[1][i]
-                    # logger.info(f"[RECV]:remote_k.device : {remote_k.device}, key_cache.device: {key_cache.device}, remote_v.device : {remote_v.device}, value_cache.device: {value_cache.device}, slot_mapping.device: {slot_mapping.device}")
+                    logger.info(f"[RECV]:remote_k.device : {remote_k.device}, key_cache.device: {key_cache.device}, remote_v.device : {remote_v.device}, value_cache.device: {value_cache.device}, slot_mapping.device: {slot_mapping.device}")
 
-                    self.cache_k(remote_k, key_cache, slot_mapping)
-                    self.cache_v(remote_v, value_cache, slot_mapping)
+                    self.cache_k(remote_k, key_cache, current_slot_mapping)
+                    self.cache_v(remote_v, value_cache, current_slot_mapping)
 
 #cur_layer_idx: 53,  remote_k.shape : torch.Size([32, 8, 128]), key_cache.shape: torch.Size([107392, 8, 128]), remote_v.shape : torch.Size([32, 8, 128]), value_cache.shape: torch.Size([107392, 8, 128])
-                    # logger.info(f"[RECV]: cur_layer_idx: {cur_layer_idx}, remote_k.shape : {remote_k.shape}, key_cache.shape: {key_cache.shape}, remote_v.shape : {remote_v.shape}, value_cache.shape: {value_cache.shape}")
+                    logger.info(f"[RECV]: cur_layer_idx: {cur_layer_idx}, remote_k.shape : {remote_k.shape}, key_cache.shape: {key_cache.shape}, remote_v.shape : {remote_v.shape}, value_cache.shape: {value_cache.shape}")
 
 # [RECV]: cur_layer_idx: 0, remote_k.shape : torch.Size([32, 8, 128]), key_cache.shape: torch.Size([107392, 8, 128]), remote_v.shape : torch.Size([32, 8, 128]), value_cache.shape: torch.Size([107392, 8, 128])
 

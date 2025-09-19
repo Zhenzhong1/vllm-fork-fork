@@ -1292,6 +1292,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             # Compute the slot mapping.
             slot_mapping.append([])
             block_table = seq_group_metadata.block_tables[seq_id]
+            logger.info(f"block_table: {block_table}, n_blks: {len(block_table)}")
 
             # Mask the [0, start_idx) tokens of the prompt with _PAD_SLOT_ID,
             # where start_idx is max(0, seq_len - sliding_window).

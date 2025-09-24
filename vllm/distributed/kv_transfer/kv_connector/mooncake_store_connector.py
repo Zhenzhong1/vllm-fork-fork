@@ -385,8 +385,7 @@ class MooncakeStoreConnector(KVConnectorBase):
             load_kvcache_key = f"{load_key_prefix}_0"
             remote_kv = self.kv_store.get(load_kvcache_key)
             
-           
-                        
+
             # original 
             # hidden_key = f"{load_key_prefix}_hidden_0"
             # hidden = self.kv_store.get(hidden_key)
@@ -408,6 +407,7 @@ class MooncakeStoreConnector(KVConnectorBase):
             if remote_kv is None or hidden is None:
                 logger.info("Didn't find any match, load_key_prefix: %s",
                                load_kvcache_key)
+                logger.info(f"remote_kv: {remote_kv}")
                 bypass_model_exec = False
                 continue
 
@@ -420,7 +420,7 @@ class MooncakeStoreConnector(KVConnectorBase):
 
             htorch.core.mark_step()
             torch.hpu.synchronize()
-                        
+
             remote_kv = remote_kv.to("hpu")
 
             # put received KV caches into paged memory layer by layer

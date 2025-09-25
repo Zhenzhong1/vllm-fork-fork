@@ -3,6 +3,7 @@ apt update
 apt install git wget curl net-tools sudo iputils-ping etcd  -y
 pip install colorlog
 
+#exit
 echo "2. setting up mooncake mooncake-transfer-engine private build............."
 #Mooncake
 wget https://github.com/hlin99/Mooncake/releases/download/private_buildv3/mooncake_transfer_engine-0.3.5-cp310-cp310-manylinux_2_17_x86_64.whl

@@ -83,8 +83,8 @@ fi
 if [ "$INC_FP8" -eq 1 ]; then
   model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2/
 else
-  model_path=/models/zhenzhong/DeepSeek-R1-G2-static
-  # model_path=/models/disk02/zhenzhong/DeepSeek-R1-G2-static
+  # model_path=/models/zhenzhong/DeepSeek-R1-G2-static
+  model_path=/models/disk02/zhenzhong/DeepSeek-R1-G2-static
   #model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2-static/
 fi
 

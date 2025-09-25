@@ -15,7 +15,7 @@ fi
 if [ -z "$2" ]; then
     echo "please input P instance number, D instance number, TP size of D instance, advanced/basic/benchmark proxy mode"
     echo "run with P=$P_INSTANCE_NUMBER, D=2, TP size=1, advanced"
-    D_INSTANCE_NUMBER=2
+    D_INSTANCE_NUMBER=1
     TP_SIZE=1
     NUM_DECODE=$((8 / TP_SIZE))
 else
@@ -25,7 +25,7 @@ fi
 if [ -z "$3" ]; then
     echo "please input P instance number, D instance number, TP size of D instance, advanced/basic/benchmark proxy mode"
     echo "run with P=$P_INSTANCE_NUMBER, D=$D_INSTANCE_NUMBER, TP size=1, advanced"
-    TP_SIZE=1
+    TP_SIZE=8
     NUM_DECODE=$((8 / TP_SIZE))
 else
     TP_SIZE=$3
@@ -60,6 +60,7 @@ fi
 DECODE_IPS=("10.239.129.81" "10.239.129.165" "10.239.129.67" "10.239.129.21")
 #For PCIE
 # DECODE_IPS=("10.112.110.161" "10.112.110.148")
+DECODE_IPS=("10.112.110.58")
 
 DBASE_PORT=8200
 DECODE_ARGS=""
@@ -75,7 +76,7 @@ done
 #For OAM
 PREFILL_IPS=("10.239.129.9" "10.239.129.67" "10.239.129.21" "10.239.128.165" "10.239.128.244" "10.239.128.153")
 #For PCIE
-# PREFILL_IPS=("10.112.110.157")
+PREFILL_IPS=("10.112.110.91")
 
 PBASE_PORT=8100
 PREFILL_ARGS=""

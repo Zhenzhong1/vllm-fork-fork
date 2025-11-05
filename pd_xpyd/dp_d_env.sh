@@ -55,11 +55,14 @@ export VLLM_DP_MASTER_PORT=25940
 export VLLM_EP_SIZE=16
 
 # warmup settings
+#export VLLM_SKIP_WARMUP=False
+#export VLLM_SKIP_WARMUP=False
 export VLLM_SKIP_WARMUP=True
 #export PT_HPU_RECIPE_CACHE_CONFIG=/workspace/pd_d_cache,false,131072
 
 # MoE settings
-export VLLM_SUPPORT_MOE_CHUNK="true"
+export VLLM_SUPPORT_MOE_CHUNK="false"
+# export VLLM_SUPPORT_MOE_CHUNK="true"
 export PT_HPU_MOE_CHUNK="64, 128"
 export PT_HPU_MOE_TOKEN_BOUNDARY="2048, 4096" # to be fine tuned further
 

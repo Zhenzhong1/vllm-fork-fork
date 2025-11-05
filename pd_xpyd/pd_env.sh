@@ -30,7 +30,7 @@ export VLLM_MLA_PERFORM_MATRIX_ABSORPTION=0
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=600
 export VLLM_USE_ASYNC_TRANSFER_IN_PD=1
 
-block_size=128
+#block_size=32
 
 # clear envs
 unset VLLM_HPU_LOG_STEP_GRAPH_COMPILATION PT_HPU_METRICS_GC_DETAILS GRAPH_VISUALIZATION
@@ -83,7 +83,9 @@ fi
 if [ "$INC_FP8" -eq 1 ]; then
   model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2/
 else
-  model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2-static/
+  # model_path=/models/zhenzhong/DeepSeek-R1-G2-static
+  model_path=/models/disk02/zhenzhong/DeepSeek-R1-G2-static
+  #model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2-static/
 fi
 
 if [ "$INC_FP8" -eq 1 ]; then

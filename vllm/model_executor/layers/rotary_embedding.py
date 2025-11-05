@@ -722,6 +722,7 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
         cos_sin = self.cos_sin_cache[torch.add(positions, offsets)
                                      if offsets is not None else positions]
         cos, sin = cos_sin.chunk(2, dim=-1)
+        
         if self.is_neox_style:
             # NOTE(woosuk): Here we assume that the positions tensor has the
             # shape [batch_size, seq_len].
@@ -775,6 +776,8 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
             rope_mode = RotaryPosEmbeddingMode.PAIRWISE
             cos = cos.repeat_interleave(2, dim=-1).unsqueeze(-2)
             sin = sin.repeat_interleave(2, dim=-1).unsqueeze(-2)
+        # if torch.distributed.get_rank()==0:
+        #     print(f"self.is_neox_style: {self.is_neox_style}, cos: {cos.to(torch.float32).cpu()}, cos.shape: {cos.shape}, \n sin: {sin.to(torch.float32).cpu()}, sin.shape: {sin.shape}")
         query_rot = apply_rotary_pos_emb(query_rot, cos, sin, None, 0, rope_mode)
         key_rot = apply_rotary_pos_emb(key_rot, cos, sin, None, 0, rope_mode)
 

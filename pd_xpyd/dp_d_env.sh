@@ -55,6 +55,8 @@ export VLLM_DP_MASTER_PORT=25940
 export VLLM_EP_SIZE=16
 
 # warmup settings
+#export VLLM_SKIP_WARMUP=False
+#export VLLM_SKIP_WARMUP=False
 export VLLM_SKIP_WARMUP=True
 #export PT_HPU_RECIPE_CACHE_CONFIG=/workspace/pd_d_cache,false,131072
 

@@ -1099,6 +1099,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                     "now.")
 
             token_chunk_size = seq_group_metadata.token_chunk_size
+            print(f" token_chunk_size : {token_chunk_size}")
             seq_data = seq_group_metadata.seq_data[seq_id]
             context_len = seq_data.get_num_computed_tokens()
             # We should use get_len here because in case of preemption
@@ -3063,7 +3064,8 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                             sync_recv_kv_caches(model, model_input,
                                                 attn_metadata, kv_caches)
                     now = time.time()
-                    logger.info("KV transfer recv time: %s", now - cur_time)
+                    if torch.distributed.get_rank()==0:
+                        logger.info("KV transfer recv time: %s", now - cur_time)
 
                 profiler_args = {
                     'real_seq_len': model_input.seq_lens,

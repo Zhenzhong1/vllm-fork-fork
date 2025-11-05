@@ -10,6 +10,7 @@ import hashlib
 import time
 from typing import TYPE_CHECKING, List, Tuple, Union
 
+import numpy as np
 import torch
 
 from vllm import _custom_ops as ops
@@ -46,6 +47,7 @@ class MooncakeStoreConnector(KVConnectorBase):
         self.k_v_head_size = self.k_head_size + self.v_head_size
         self.block_size = 128
         max_num_blocks = 1000
+        self.counter = 0
         self.block_indice_place_holder = torch.zeros(max_num_blocks,
                                                      dtype=torch.int,
                                                      device="hpu")
@@ -143,7 +145,7 @@ class MooncakeStoreConnector(KVConnectorBase):
             self.kv_store.put(hidden_key,
                               hidden_or_intermediate_states[start_pos:end_pos])
 
-        logger.debug("[rank%d]: KV send DONE.", torch.distributed.get_rank())
+        logger.info("[rank%d]: KV send DONE.", torch.distributed.get_rank())
 
     def recv_kv_caches_and_hidden_states(
         self, model_executable: torch.nn.Module,
@@ -226,7 +228,7 @@ class MooncakeStoreConnector(KVConnectorBase):
             hidden_or_intermediate_states = None
 
         else:
-            logger.debug(
+            logger.info(
                 "[rank%d]: Successfully received all KVs and hidden "
                 "states, skip model forwarding.", torch.distributed.get_rank())
             hidden_or_intermediate_states = torch.cat(
@@ -311,21 +313,22 @@ class MooncakeStoreConnector(KVConnectorBase):
 
             keys = torch.cat(keys, dim=0)
             kvcache_to_sent = keys.cpu()
-            logger.debug("kv cache reshape time: %s", time.time() - start_time)
+            logger.info("kv cache reshape time: %s", time.time() - start_time)
             store_kvcache_key = f"{store_key_prefix}_{self.rank}"
             self.kv_store.put_tensor(store_kvcache_key, kvcache_to_sent)
 
-            logger.debug("put kv cache key: %s", store_kvcache_key)
+            logger.info("put kv cache key: %s", store_kvcache_key)
 
+            logger.info(f"kvcache_to_sent.shape : {kvcache_to_sent.shape}, kvcache_to_sent.dtype: {kvcache_to_sent.dtype}, kvcache_to_sent.device: {kvcache_to_sent.device}")
             hidden_key = f"{store_key_prefix}_hidden_{self.rank}"
             self.kv_store.put_tensor(
                 hidden_key,
                 hidden_or_intermediate_states[idx].unsqueeze(0).cpu())
             # ==== graph should end here ======
             htorch.core.mark_step()
-            logger.debug("kv cache reshape + put time: %s",
+            logger.info("kv cache reshape + put time: %s",
                          time.time() - start_time)
-        logger.debug("[rank%d]: KV send DONE.", torch.distributed.get_rank())
+        logger.info("[rank%d]: KV send DONE.", torch.distributed.get_rank())
 
     def recv_kv_caches_and_hidden_states_hpu(
         self, model_executable: torch.nn.Module,
@@ -345,6 +348,9 @@ class MooncakeStoreConnector(KVConnectorBase):
         seq_lens_tensor = model_input.attn_metadata.seq_lens_tensor
         seq_lens = seq_lens_tensor.tolist()  #2D list
         block_indices_list = attn_metadata.block_indices.tolist()
+        if torch.distributed.get_rank()==0:
+            logger.info(f"[RECV] recv_kv_caches_and_hidden_states_hpu..., kv_caches[0][0].shape: {kv_caches[0][0].shape}, seq_lens: {seq_lens}")
+
         # block_indices was 2D and the second dimension was padded to block size.
         padded_num_blocks = (attn_metadata.slot_mapping.size(1) + \
             self.block_size - 1 ) // self.block_size
@@ -368,6 +374,12 @@ class MooncakeStoreConnector(KVConnectorBase):
                 block_indices_list[start_block_idx:end_block_idx],
                 device="hpu",
                 dtype=torch.int32)
+            
+            # block_indices_tensor : tensor([1], device='hpu:0', dtype=torch.int32)
+            
+            if torch.distributed.get_rank()==0:
+                torch.set_printoptions(threshold=100000)
+                # print(f"block_indices_tensor : {block_indices_tensor}, input_ids.shape: {current_tokens.shape}, input_ids:{current_tokens}")
             # we think this is a padding sequence, so we skip it.
             # but we still need write kv cache
             if slen == 1:
@@ -405,6 +417,8 @@ class MooncakeStoreConnector(KVConnectorBase):
             if self._wait_for_key(hidden_key):
                 hidden = self.kv_store.get_tensor(hidden_key)
 
+            # remote_kv = remote_kv.to("hpu")
+            
             if remote_kv is None or hidden is None:
                 # didn't find any match.
                 logger.warning("Didn't find any match, key_prefix: %s",
@@ -414,12 +428,49 @@ class MooncakeStoreConnector(KVConnectorBase):
                 start_block_idx += padded_num_blocks
                 continue
 
+            if torch.distributed.get_rank()==0:
+                logger.info(f"[RECV]: remote_kv.shape: {remote_kv.shape}, remote_kv.dtype: {remote_kv.dtype}, remote_kv.device: {remote_kv.device}, load_kvcache_key: {load_kvcache_key}")
+            # if torch.distributed.get_rank()==0:
+            #     flat_data = hidden.flatten()
+            #     values_str = np.array_str(
+            #             np.array(flat_data[:576].tolist()), 
+            #         max_line_width=240, 
+            #         precision=6, 
+            #         suppress_small=True
+            #     )
+            #     # 在前面添加四个空格缩进
+            #     print("HIDDEN:------------------------")
+            #     print("\n".join(["        " + line for line in values_str.split('\n')]))
+            #     print("-" * 20)
+            # hidden.shape: torch.Size([1, 7168]), load_kvcache_key: 13880777315084266532_0
+            if torch.distributed.get_rank()==0:
+                logger.info(f"[RECV]: hidden.shape: {hidden.shape}, hidden.dtype: {hidden.dtype},  hidden.device: {hidden.device}, hidden_key: {hidden_key}")
+            num_elements = remote_kv.numel()
+            element_size = remote_kv.element_size()
+            total_bytes = num_elements * element_size
+# remote_kv.shape : torch.Size([61, 128, 1, 576]), remote_kv.dtype: torch.bfloat16, element_size : 2, num_elements: 4497408, remote_kv 张量占用的字节数是: 8994816 字节, hidden.shape: torch.Size([1, 7168])
+            if torch.distributed.get_rank()==0:
+                logger.info(f"[RECV]: remote_kv.shape : {remote_kv.shape}, remote_kv.dtype: {remote_kv.dtype}, element_size : {element_size}, num_elements: {num_elements}, remote_kv 张量占用的字节数是: {total_bytes} 字节, hidden.shape: {hidden.shape}")
+
             # it's padded to block size now.
             # key_values = remote_kv.to("hpu")
             # TEST: use CPU kv cache directly
             keys = remote_kv
             # values = key_values[..., self.k_head_size:]
+            
+            # if torch.distributed.get_rank()==0:
+            #     print("KEYS:------------------------")
 
+            #     flat_data = keys.flatten()
+            #     values_str = np.array_str(
+            #         np.array(flat_data[:576].tolist()), 
+            #         max_line_width=240,
+            #         precision=6, 
+            #         suppress_small=True
+            #     )
+                
+            #     print("\n".join(["        " + line for line in values_str.split('\n')]))
+            #     print("-" * 20)
             htorch.core.mark_step()
             torch.hpu.synchronize()
             # put received KV caches into paged memory layer by layer
@@ -428,6 +479,8 @@ class MooncakeStoreConnector(KVConnectorBase):
             # [num_blocks, block_size, num_kv_heads(1,omitted), k_head_size]
             # value shape should be
             # [num_blocks, block_size, num_kv_heads(1,omitted), v_head_size]
+            if torch.distributed.get_rank()==0:
+                print(f"block_indices_tensor : {block_indices_tensor}")
             for i in range(model_executable.model.start_layer,
                            model_executable.model.end_layer):
                 current_layer_idx = i - model_executable.model.start_layer
@@ -437,6 +490,11 @@ class MooncakeStoreConnector(KVConnectorBase):
 
                 key = keys[current_layer_idx].squeeze(-2).view(
                     -1, self.block_size, self.k_v_head_size)
+                
+                ## [..., , 576]
+                # -> [61, 128*1, 1, 576]
+                # keys [num_block, block_size, 576]
+                #  block_indices_tensor
 
                 # ====== D2D =======
                 self.cache_k(key,
@@ -458,7 +516,7 @@ class MooncakeStoreConnector(KVConnectorBase):
             hidden_or_intermediate_states = None
 
         else:
-            logger.debug(
+            logger.info(
                 "[rank%d]: Successfully received all KVs and hidden "
                 "states, skip model forwarding.", torch.distributed.get_rank())
             hidden_or_intermediate_states = torch.cat(
@@ -474,6 +532,8 @@ class MooncakeStoreConnector(KVConnectorBase):
 
         load_kvcache_key = f"{prefix}_0"
         load_hidden_key = f"{prefix}_hidden_0"
+        self.counter = self.counter + 1
+        print(f"prefix : {prefix}, self.counter: {self.counter}")
         remote_kv = None
         if self._wait_for_key(load_kvcache_key):
             remote_kv = self.kv_store.get_tensor(load_kvcache_key,

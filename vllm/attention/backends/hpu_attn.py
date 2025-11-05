@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Type
 
 import torch
+import numpy as np
 import habana_frameworks.torch.core as htcore
 import vllm_hpu_extension.kernels as kernels
 import vllm_hpu_extension.ops as ops
@@ -232,12 +233,26 @@ def flat_pa_mla(query, key_cache, value_cache, block_list, block_mapping,
     query = ops.batch2block(scale * query, block_mapping,
                             batch2block_matmul_op).unsqueeze(-2)
     key = keys_fetch_func(key_cache, block_list)
+    
+    # kv_lora_rank = 512
     if value_cache is not None:
         value_cache = value_cache.unsqueeze(2)
         value = values_fetch_func(value_cache, block_list)
         key = torch.concat((value, key), dim=-1)
     else:
         value = key[..., :kv_lora_rank]
+
+    # print("HAPPY" * 30)
+    # flat_data = key.flatten()
+    # values_str = np.array_str(
+    #     np.array(flat_data[:].tolist()), 
+    #     max_line_width=240, 
+    #     precision=6,
+    #     suppress_small=True
+    # )
+    # # 在前面添加四个空格缩进
+    # print("\n".join(["        " + line for line in values_str.split('\n')]))
+    # print("-" * 30)
 
     key = key.transpose(1, 2)
     value = value.transpose(1, 2)
@@ -396,6 +411,12 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         assert hasattr(attn_metadata,
                        "input_positions"), f"attn meta: {attn_metadata}"
 
+        # print(f"envs.VLLM_MLA_PERFORM_MATRIX_ABSORPTION: {envs.VLLM_MLA_PERFORM_MATRIX_ABSORPTION}, is_prefill: {is_prefill}")
+
+        # torch.set_printoptions(precision=4, sci_mode=False, linewidth=240)
+        # print(f"k_pe : {k_pe}, k_pe.shape : {k_pe.shape}")
+        
+        # decode
         if not is_prefill:
             if envs.VLLM_MLA_PERFORM_MATRIX_ABSORPTION:
                 q_nope = self._q_proj_and_k_up_proj(hidden_states_or_q_c)
@@ -406,6 +427,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
             input_positions = attn_metadata.input_positions.view(-1)
             q_pe, k_pe = \
                 self.rotary_emb(input_positions, q_pe, k_pe)
+        # prefill
         else:
             q = self.q_proj(hidden_states_or_q_c)[0]\
                 .view(-1, self.num_heads, self.qk_head_dim)
@@ -420,9 +442,15 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         block_indices = attn_metadata.block_indices
         block_offsets = attn_metadata.block_offsets
 
+        # torch.set_printoptions(precision=5, sci_mode=False, linewidth=240)
+        # print(f"k_pe : {k_pe}, k_pe.shape : {k_pe.shape}")
+
+        # qk_rope_head_dim = 64
+        # k_pe = 1,128,64
         latent_vec_k = torch.concat(
             (k_c_normed, k_pe.view(batch_size, -1, self.qk_rope_head_dim)),
             dim=-1)
+        # 64 + 512
         latent_vec_k = latent_vec_k.view(
             -1, self.qk_rope_head_dim + self.kv_lora_rank)
         if is_prefill:
@@ -435,11 +463,45 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
                 self.latent_cache_k(latent_vec_k, kv_cache[0],
                                     block_indices, block_offsets)
                 k_cache = kv_cache[0]
+                # 这里是kv cache些进去的过程，
+                # 打印K_cache [61, 128, 1, 576]
+                # k_cache.shape [781, 128, 576]
+                # laten_vec_k.shape [1, 576]
+                
+                
+                # 这里如果是prefill就是[1， 128, 576]， 如果是decode就是[1, 576]
+                # print(f"HAPPY--------------------------------k_cache.shape : {k_cache.shape}, latent_vec_k.shape : {latent_vec_k.shape}")
+                # # 打印的是第0个token，
+                # # -0.010498 -0.007141，layer 53 index0
+                # flat_data = latent_vec_k[0][0].flatten()
+                # values_str = np.array_str(
+                #     np.array(flat_data[:].tolist()), 
+                #     max_line_width=240,
+                #     precision=6,
+                #     suppress_small=True
+                # )
+                
+                # print("\n".join(["        " + line for line in values_str.split('\n')]))
+                # print("-" * 20)
             else:
                 k_cache = self.latent_cache_k_nodeq(latent_vec_k, kv_cache[0],
                                                     block_indices,
                                                     block_offsets)
             v_cache = None
+
+        
+        # print("HAPPY--------------------------------")
+        # flat_data = kv_cache[0][0][0].flatten()
+        # values_str = np.array_str(
+        #     np.array(flat_data[:].tolist()), 
+        #     max_line_width=240,
+        #     precision=6,
+        #     suppress_small=True
+        # )
+        
+        # print("\n".join(["        " + line for line in values_str.split('\n')]))
+        # print("-" * 20)
+
 
         if is_prefill:
             return self._forward_prefill(q, k_c_normed, k_pe, attn_metadata,
@@ -463,6 +525,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         # v with 0s to match the qk head dim
         v_padded = torch.nn.functional.pad(v, [0, q.shape[-1] - v.shape[-1]],
                                            value=0)
+        # qk_head_dim = 64
         q = q.view(batch_size, -1, self.num_heads, self.qk_head_dim)
         k = k.view(batch_size, -1, self.num_heads, self.qk_head_dim)
         v_padded = v_padded.view(batch_size, -1, self.num_heads,
